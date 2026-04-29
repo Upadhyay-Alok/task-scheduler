@@ -1,13 +1,10 @@
 import os
 import redis
 
-# Docker me service name "redis" hoga
-# Local me "localhost" use hoga
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+#  Render + Local compatible
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-redis_client = redis.Redis(
-    host=REDIS_HOST,
-    port=6379,
-    db=0,
+redis_client = redis.from_url(
+    redis_url,
     decode_responses=True
 )
