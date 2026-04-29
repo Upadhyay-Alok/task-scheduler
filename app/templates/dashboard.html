@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>FAANG Task Dashboard 🚀</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    body { font-family: Arial; background:#f6f7fb; margin:0; }
+    .container { max-width: 900px; margin: 30px auto; background:#fff; padding:20px; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.08); }
+
+    h1 { text-align:center; }
+
+    .actions { text-align:center; margin-bottom:15px; }
+
+    button {
+      padding:10px 16px;
+      border:none;
+      border-radius:8px;
+      background:#4f46e5;
+      color:white;
+      cursor:pointer;
+    }
+
+    .metrics {
+      display:flex;
+      justify-content:space-around;
+      margin:15px 0;
+    }
+
+    .card {
+      padding:10px 20px;
+      border-radius:10px;
+      background:#f3f4f6;
+      text-align:center;
+      font-weight:bold;
+    }
+
+    .progress-wrap {
+      width:100%;
+      background:#e5e7eb;
+      border-radius:10px;
+      height:12px;
+      margin:10px 0;
+    }
+
+    .progress-bar {
+      height:100%;
+      width:0%;
+      background:#22c55e;
+      transition:0.4s;
+      border-radius:10px;
+    }
+
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding:10px; border:1px solid #e5e7eb; text-align:center; }
+
+    .badge { padding:4px 10px; border-radius:999px; font-weight:600; }
+
+    .pending { background:#fff7ed; color:#f97316; }
+    .queued { background:#faf5ff; color:#9333ea; }
+    .running { background:#eff6ff; color:#2563eb; }
+    .completed { background:#ecfdf5; color:#16a34a; }
+    .failed { background:#fef2f2; color:#dc2626; }
+
+    canvas { display:block; margin:20px auto; }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>🚀 FAANG Task Dashboard</h1>
+
+<div class="actions">
+  <button onclick="runTasks()">Run Tasks</button>
+</div>
+
+<div class="metrics">
+  <div class="card">✅ Success: <span id="successCount">0</span></div>
+  <div class="card">❌ Failed: <span id="failCount">0</span></div>
+</div>
+
+<div class="progress-wrap">
+  <div id="progressBar" class="progress-bar"></div>
+</div>
+
+<canvas id="dagCanvas" width="600" height="250"></canvas>
+
+<table>
+<thead>
+<tr>
+  <th>Task</th>
+  <th>Status</th>
+  <th>Logs</th>
+</tr>
+</thead>
+<tbody id="taskTable"></tbody>
+</table>
+
+</div>
+
+<script>
+
+/* 🔥 WebSocket + fallback */
+let ws;
+
+function connectWS() {
+  ws = new WebSocket("ws://127.0.0.1:8000/ws");
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    render(data);
+  };
+
+  ws.onclose = () => {
+    console.log("WS disconnected → fallback polling active");
+  };
+}
+
+connectWS();
+
+/* 🔥 FALLBACK polling (VERY IMPORTANT) */
+setInterval(async () => {
+  try {
+    const res = await fetch('/status');
+    const data = await res.json();
+    render(data);
+  } catch(e) {}
+}, 2000);
+
+
+/* 🔥 Render */
+function render(data) {
+  renderTable(data);
+  drawGraph(data);
+  updateProgress(data);
+  fetchMetrics();
+}
+
+
+/* 🔥 Table */
+function renderTable(data) {
+  let table = document.getElementById("taskTable");
+  table.innerHTML = "";
+
+  const keys = Object.keys(data).sort();
+
+  for (let t of keys) {
+    let s = data[t];
+
+    table.innerHTML += `
+      <tr>
+        <td>${t}</td>
+        <td><span class="badge ${s}">${s}</span></td>
+        <td><button onclick="showLogs('${t}')">View</button></td>
+      </tr>
+    `;
+  }
+}
+
+
+/* 🔥 Logs */
+function showLogs(task) {
+  fetch(`/logs/${task}`)
+    .then(r=>r.json())
+    .then(d=>alert(d.join("\n")));
+}
+
+
+/* 🔥 Graph */
+function drawGraph(data) {
+  const ctx = document.getElementById("dagCanvas").getContext("2d");
+  ctx.clearRect(0,0,600,250);
+
+  const pos = {A:{x:300,y:50},B:{x:150,y:180},C:{x:450,y:180}};
+
+  ctx.beginPath();
+  ctx.moveTo(300,50); ctx.lineTo(150,180);
+  ctx.moveTo(300,50); ctx.lineTo(450,180);
+  ctx.stroke();
+
+  for (let node in pos) {
+    let s = data[node] || "pending";
+
+    let color = "#f97316";
+    if (s==="running") color="#2563eb";
+    if (s==="completed") color="#16a34a";
+    if (s==="failed") color="#dc2626";
+
+    ctx.beginPath();
+    ctx.arc(pos[node].x,pos[node].y,25,0,Math.PI*2);
+    ctx.fillStyle=color;
+    ctx.fill();
+
+    ctx.fillStyle="white";
+    ctx.textAlign="center";
+    ctx.fillText(node,pos[node].x,pos[node].y+5);
+  }
+}
+
+
+/* 🔥 Progress */
+function updateProgress(data) {
+  let total = Object.keys(data).length || 1;
+  let done = Object.values(data).filter(v=>v==="completed").length;
+
+  let percent = Math.round((done/total)*100);
+  document.getElementById("progressBar").style.width = percent+"%";
+}
+
+
+/* 🔥 Metrics */
+function fetchMetrics() {
+  fetch("/metrics")
+    .then(r=>r.json())
+    .then(d=>{
+      document.getElementById("successCount").innerText = d.success;
+      document.getElementById("failCount").innerText = d.failed;
+    });
+}
+
+
+/* 🔥 Run */
+async function runTasks() {
+  await fetch("/run",{method:"POST"});
+}
+
+</script>
+
+</body>
+</html>

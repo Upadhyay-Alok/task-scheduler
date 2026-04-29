@@ -1,44 +1,87 @@
-from app.dag import DAG
 from app.tasks import execute_task
+import time
+from collections import defaultdict
+
+MAX_PARALLEL = 2   # 🔥 backpressure limit
 
 class Scheduler:
     def __init__(self, db):
-        self.dag = DAG()
         self.db = db
-        self.tasks = {}
+        self.dep_map = defaultdict(list)
 
-    def load(self):
-        tasks = self.db.get_tasks()
+    def build_dependency_map(self):
         deps = self.db.get_dependencies()
 
-        for task_id, priority, status in tasks:
-            self.tasks[task_id] = {
-                "priority": priority,
-                "status": status
-            }
+        print("📌 Dependencies:", deps)
 
-        for t1, t2 in deps:
-            self.dag.add_edge(t1, t2)
+        for parent, child in deps:
+            parent = str(parent)
+            child = str(child)
+            self.dep_map[child].append(parent)
+
+        print("📌 Dependency Map:", dict(self.dep_map))
+
+    def can_run(self, task_id):
+        parents = self.dep_map.get(task_id, [])
+
+        for parent in parents:
+            if self.db.get_status(parent) != "completed":
+                return False
+
+        return True
+
+    def inflight_tasks(self):
+        """🔥 count running + queued tasks"""
+        statuses = self.db.get_all_status()
+        return sum(1 for s in statuses.values() if s in ["queued", "running"])
 
     def schedule(self):
-        self.load()
+        print("🚀 Scheduler started...")
 
-        # ensure all nodes exist
-        for task in self.tasks:
-            if task not in self.dag.indegree:
-                self.dag.indegree[task] = 0
+        self.build_dependency_map()
 
-        order = self.dag.topological_sort()
+        triggered = set()
 
-        print("DAG ORDER:", order)
+        while True:
+            tasks = self.db.get_tasks()
+            all_done = True
 
-        for task_id in order:
-            if self.tasks[task_id]["status"] == "pending":
-                
-                print(f"Sending task: {task_id}")
+            ready = []
 
-                # 🔥 status update → pending → queued
+            for task_id, priority, _ in tasks:
+                task_id = str(task_id)
+                status = self.db.get_status(task_id)
+
+                if status != "completed":
+                    all_done = False
+
+                if (
+                    status == "pending"
+                    and task_id not in triggered
+                    and self.can_run(task_id)
+                ):
+                    # 🔥 collect ready tasks
+                    ready.append((priority, task_id))
+
+            # 🔥 priority sort (higher priority first)
+            ready.sort(reverse=True)
+
+            for _, task_id in ready:
+
+                # 🔥 backpressure check
+                if self.inflight_tasks() >= MAX_PARALLEL:
+                    break
+
+                print(f"🔥 Running: {task_id}")
+
+                triggered.add(task_id)
+
                 self.db.update_status(task_id, "queued")
 
-                # 🔥 send to Celery
                 execute_task.delay(task_id)
+
+            if all_done:
+                print("✅ All tasks completed")
+                break
+
+            time.sleep(1)
